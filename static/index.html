@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Психофизиологический монитор</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    @keyframes blink { 50% { opacity: .4 } }
+    .warming  { animation: blink 1.4s ease-in-out infinite }
+    @keyframes spin { to { transform: rotate(360deg) } }
+    .spinner  { animation: spin .8s linear infinite }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono min-h-screen select-none">
+
+<!-- Header -->
+<header class="sticky top-0 z-20 border-b border-gray-800/60 bg-gray-950/90 backdrop-blur
+               px-5 py-2.5 flex items-center justify-between gap-4">
+  <div class="flex items-center gap-2.5">
+    <div id="conn-dot" class="w-2.5 h-2.5 rounded-full bg-gray-600 transition-colors duration-300"></div>
+    <span class="text-xs text-gray-500 uppercase tracking-widest hidden sm:inline">
+      Психофизиологический монитор
+    </span>
+  </div>
+
+  <!-- Tabs -->
+  <nav class="flex gap-1">
+    <button onclick="tab('monitor')"  id="tab-btn-monitor"
+            class="tab-btn active-tab px-4 py-1.5 rounded-lg text-xs uppercase tracking-wider transition-colors">
+      Монитор
+    </button>
+    <button onclick="tab('sessions')" id="tab-btn-sessions"
+            class="tab-btn px-4 py-1.5 rounded-lg text-xs uppercase tracking-wider transition-colors">
+      Сессии
+    </button>
+    <button onclick="tab('model')"    id="tab-btn-model"
+            class="tab-btn px-4 py-1.5 rounded-lg text-xs uppercase tracking-wider transition-colors">
+      Модель
+    </button>
+  </nav>
+
+  <div class="text-xs text-gray-600 hidden md:block">
+    Окно: <span id="hdr-window" class="text-gray-400">—</span>
+  </div>
+</header>
+
+<!-- Monitor tab -->
+<div id="tab-monitor" class="tab-pane p-5 grid grid-cols-12 gap-4 max-w-7xl mx-auto">
+
+  <!-- Left panel -->
+  <div class="col-span-12 lg:col-span-4 flex flex-col gap-4">
+
+    <!-- Verdict -->
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-5 flex flex-col items-center gap-4">
+      <p class="text-[10px] text-gray-600 uppercase tracking-[.2em]">Оценка состояния</p>
+
+      <div id="verdict-text"
+           class="w-full text-center text-2xl font-bold tracking-[.12em] py-5 px-4
+                  rounded-xl border border-gray-800 text-gray-700 transition-all duration-500">
+        НЕТ СИГНАЛА
+      </div>
+
+      <!-- Stress bar -->
+      <div class="w-full space-y-1.5">
+        <div class="flex justify-between text-[10px] text-gray-600">
+          <span>Стресс-индекс</span><span id="stress-pct">—</span>
+        </div>
+        <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+          <div id="stress-bar" class="h-full bg-gray-700 rounded-full transition-all duration-600"
+               style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="text-center">
+        <p class="text-[10px] text-gray-600 mb-1">Уверенность</p>
+        <p id="confidence-val" class="text-2xl font-light text-gray-400">—</p>
+      </div>
+    </div>
+
+    <!-- Live readings -->
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+      <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-3">Показания</p>
+      <div class="grid grid-cols-3 gap-2">
+        <div class="bg-gray-800/70 rounded-xl p-3 text-center">
+          <p class="text-[9px] text-cyan-500/70 mb-1">ЧСС</p>
+          <p id="bpm-val" class="text-xl font-light text-cyan-400">—</p>
+          <p class="text-[9px] text-gray-700 mt-0.5">уд/мин</p>
+        </div>
+        <div class="bg-gray-800/70 rounded-xl p-3 text-center">
+          <p class="text-[9px] text-violet-500/70 mb-1">Темп.</p>
+          <p id="temp-val" class="text-xl font-light text-violet-400">—</p>
+          <p class="text-[9px] text-gray-700 mt-0.5">°C</p>
+        </div>
+        <div class="bg-gray-800/70 rounded-xl p-3 text-center">
+          <p class="text-[9px] text-orange-500/70 mb-1">Давл.</p>
+          <p id="fsr-val" class="text-xl font-light text-orange-400">—</p>
+          <p class="text-[9px] text-gray-700 mt-0.5">raw</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Baseline + Session mini-controls -->
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4 space-y-3">
+      <!-- Baseline -->
+      <div>
+        <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-2">Базлайн (покой ~60 с)</p>
+        <div id="baseline-status" class="text-xs text-gray-600 mb-2">Не откалиброван</div>
+        <div class="flex gap-2">
+          <button onclick="startBaseline()"
+                  class="flex-1 text-xs border border-gray-700 hover:border-emerald-700
+                         hover:text-emerald-400 px-3 py-1.5 rounded-lg transition-colors"
+                  id="btn-baseline-start">Начать</button>
+          <button onclick="stopBaseline()"
+                  class="flex-1 text-xs border border-gray-700 hover:border-gray-500
+                         px-3 py-1.5 rounded-lg transition-colors hidden"
+                  id="btn-baseline-stop">Завершить</button>
+        </div>
+      </div>
+      <!-- Top features -->
+      <div id="explain-block" class="hidden">
+        <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-2">Ключевые факторы</p>
+        <div id="explain-list" class="space-y-1.5"></div>
+      </div>
+    </div>
+
+    <!-- Mock data generator -->
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4 space-y-2">
+      <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-2">Генератор данных</p>
+      <div id="mock-status" class="text-xs text-gray-600">Остановлен</div>
+      <div class="flex gap-2 items-center mt-2">
+        <select id="mock-scenario"
+                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs
+                       focus:outline-none focus:border-gray-500">
+          <option value="calm">Спокойствие</option>
+          <option value="cognitive_load">Когнитивная нагрузка</option>
+          <option value="stressed">Стресс</option>
+        </select>
+        <button onclick="startMock()"
+                class="text-xs border border-gray-700 hover:border-emerald-700
+                       hover:text-emerald-400 px-3 py-1.5 rounded-lg transition-colors">▶</button>
+        <button onclick="stopMock()"
+                class="text-xs border border-gray-700 hover:border-red-700
+                       hover:text-red-400 px-3 py-1.5 rounded-lg transition-colors">■</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right panel: Charts -->
+  <div class="col-span-12 lg:col-span-8 flex flex-col gap-3.5">
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+      <p class="text-[10px] text-cyan-500/60 uppercase tracking-[.2em] mb-2">ЧСС (уд/мин)</p>
+      <canvas id="bpm-chart" height="80"></canvas>
+    </div>
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+      <p class="text-[10px] text-violet-500/60 uppercase tracking-[.2em] mb-2">Температура (°C)</p>
+      <canvas id="temp-chart" height="80"></canvas>
+    </div>
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+      <p class="text-[10px] text-orange-500/60 uppercase tracking-[.2em] mb-2">Давление FSR</p>
+      <canvas id="fsr-chart" height="60"></canvas>
+    </div>
+    <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+      <p class="text-[10px] text-rose-500/60 uppercase tracking-[.2em] mb-2">Стресс-индекс</p>
+      <canvas id="stress-chart" height="60"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Sessions tab -->
+<div id="tab-sessions" class="tab-pane hidden p-5 max-w-4xl mx-auto space-y-5">
+
+  <!-- Recording controls -->
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
+    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-4">Запись сессии</p>
+    <div class="flex flex-wrap items-end gap-4">
+      <div>
+        <label class="text-xs text-gray-500 block mb-1.5">Метка состояния</label>
+        <select id="session-label"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
+                       focus:outline-none focus:border-gray-500">
+          <option value="calm">Спокойствие</option>
+          <option value="cognitive_load">Когнитивная нагрузка</option>
+          <option value="stressed">Стресс</option>
+        </select>
+      </div>
+      <button onclick="startSession()" id="btn-sess-start"
+              class="px-5 py-2 text-sm bg-emerald-700/30 border border-emerald-700/50
+                     hover:bg-emerald-700/50 rounded-lg transition-colors">
+        ▶ Начать запись
+      </button>
+      <button onclick="stopSession()" id="btn-sess-stop"
+              class="px-5 py-2 text-sm bg-red-700/30 border border-red-700/50
+                     hover:bg-red-700/50 rounded-lg transition-colors hidden">
+        ■ Остановить
+      </button>
+      <div id="sess-timer-block" class="hidden text-center">
+        <div class="text-xs text-gray-600 mb-0.5">Записано</div>
+        <div id="sess-count" class="text-2xl font-light text-gray-300">0</div>
+        <div class="text-xs text-gray-700">отсчётов</div>
+      </div>
+    </div>
+    <div id="sess-status" class="mt-3 text-xs text-gray-600"></div>
+  </div>
+
+  <!-- Sessions list -->
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <p class="text-[10px] text-gray-600 uppercase tracking-[.2em]">Сохранённые сессии</p>
+      <button onclick="loadSessions()"
+              class="text-xs text-gray-600 hover:text-gray-300 transition-colors">↻ обновить</button>
+    </div>
+    <div id="sessions-table" class="text-sm text-gray-500 text-center py-6">Загрузка…</div>
+  </div>
+</div>
+
+<!-- Model tab -->
+<div id="tab-model" class="tab-pane hidden p-5 max-w-4xl mx-auto space-y-5">
+
+  <!-- Scores -->
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
+    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-4">Метрики моделей</p>
+    <div id="model-scores" class="grid grid-cols-2 gap-4"></div>
+  </div>
+
+  <!-- Feature importance -->
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
+    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-4">Важность признаков</p>
+    <canvas id="importance-chart" height="180"></canvas>
+  </div>
+
+  <!-- Retrain -->
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
+    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-3">Переобучение</p>
+    <p class="text-xs text-gray-500 mb-4">
+      Переобучает модель на синтетических данных + записанных сессиях (вес 5:1 в пользу реальных).
+    </p>
+    <div class="flex items-center gap-4">
+      <button onclick="retrain()" id="btn-retrain"
+              class="px-5 py-2 text-sm bg-indigo-700/30 border border-indigo-700/50
+                     hover:bg-indigo-700/50 rounded-lg transition-colors">
+        Переобучить
+      </button>
+      <div id="retrain-status" class="text-xs text-gray-600"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tab routing
+
+function tab(name) {
+  document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active-tab'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  document.getElementById('tab-btn-' + name).classList.add('active-tab');
+  if (name === 'sessions') loadSessions();
+  if (name === 'model')    loadModelTab();
+}
+
+// Inject tab styles once
+(function() {
+  const s = document.createElement('style');
+  s.textContent = `
+    .tab-btn { color: #6b7280 }
+    .tab-btn:hover { color: #d1d5db }
+    .active-tab { background: #1f2937; color: #f3f4f6 }
+  `;
+  document.head.appendChild(s);
+})();
+
+// Charts
+
+const MAX_PTS = 60;
+Chart.defaults.color = '#374151';
+Chart.defaults.borderColor = '#111827';
+
+function makeChart(id, color, yMin, yMax) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: {
+      labels: Array(MAX_PTS).fill(''),
+      datasets: [{ data: Array(MAX_PTS).fill(null), borderColor: color,
+        backgroundColor: color + '12', borderWidth: 1.5, fill: true,
+        tension: 0.38, pointRadius: 0 }],
+    },
+    options: {
+      animation: false, responsive: true,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: { min: yMin, max: yMax,
+             grid: { color: '#111827' },
+             ticks: { color: '#374151', font: { size: 9 }, maxTicksLimit: 4 } },
+      },
+    },
+  });
+}
+
+const charts = {
+  bpm:    makeChart('bpm-chart',    '#22d3ee', 40,  150),
+  temp:   makeChart('temp-chart',   '#a78bfa', 35,  38.5),
+  fsr:    makeChart('fsr-chart',    '#fb923c', 0,   1023),
+  stress: makeChart('stress-chart', '#f43f5e', 0.0, 1.0),
+};
+
+function push(chart, val) {
+  const ds = chart.data.datasets[0].data;
+  ds.push(val); if (ds.length > MAX_PTS) ds.shift();
+  chart.update('none');
+}
+
+// Monitor update from SSE event
+
+const LEVELS = {
+  calm:           { label: 'СПОКОЙСТВИЕ', t: 'text-emerald-400', b: 'border-emerald-900/60', bar: 'bg-emerald-500' },
+  cognitive_load: { label: 'НАГРУЗКА',    t: 'text-amber-400',   b: 'border-amber-900/60',  bar: 'bg-amber-400'  },
+  stressed:       { label: 'СТРЕСС',      t: 'text-red-400',     b: 'border-red-900/50',    bar: 'bg-red-500'    },
+  warming_up:     { label: 'РАЗОГРЕВ…',   t: 'text-gray-500 warming', b: 'border-gray-800', bar: 'bg-gray-600'   },
+  no_signal:      { label: 'НЕТ СИГНАЛА', t: 'text-gray-700',    b: 'border-gray-800',      bar: 'bg-gray-700'   },
+};
+
+function updateMonitor(d) {
+  const cfg = LEVELS[d.stress_level] ?? LEVELS.no_signal;
+  const vt = document.getElementById('verdict-text');
+  vt.textContent = cfg.label;
+  vt.className = `w-full text-center text-2xl font-bold tracking-[.12em] py-5 px-4
+                   rounded-xl border transition-all duration-500 ${cfg.t} ${cfg.b}`;
+
+  const pct = d.stress_score != null ? Math.round(d.stress_score * 100) : 0;
+  document.getElementById('stress-pct').textContent = d.stress_score != null ? pct + '%' : '—';
+  const bar = document.getElementById('stress-bar');
+  bar.style.width = pct + '%';
+  bar.className = `h-full rounded-full transition-all duration-600 ${cfg.bar}`;
+
+  document.getElementById('confidence-val').textContent =
+    d.confidence != null ? (d.confidence * 100).toFixed(1) + '%' : '—';
+
+  if (d.bpm     != null) document.getElementById('bpm-val').textContent  = d.bpm.toFixed(1);
+  if (d.temp_c  != null) document.getElementById('temp-val').textContent = d.temp_c.toFixed(2);
+  if (d.fsr_raw != null) document.getElementById('fsr-val').textContent  = d.fsr_raw;
+  if (d.window_size != null) document.getElementById('hdr-window').textContent = d.window_size + '/25';
+
+  push(charts.bpm,    d.bpm    ?? null);
+  push(charts.temp,   d.temp_c ?? null);
+  push(charts.fsr,    d.fsr_raw ?? null);
+  push(charts.stress, d.stress_score ?? null);
+
+  // Explanation
+  if (d.explanation && d.explanation.length) {
+    document.getElementById('explain-block').classList.remove('hidden');
+    const list = document.getElementById('explain-list');
+    list.innerHTML = d.explanation.map(f => {
+      const w = Math.round(f.importance * 400);
+      return `<div class="flex items-center gap-2">
+        <div class="text-[10px] text-gray-500 w-36 truncate" title="${f.label}">${f.label}</div>
+        <div class="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+          <div class="h-full bg-indigo-500/70 rounded-full" style="width:${w}px"></div>
+        </div>
+        <div class="text-[10px] text-gray-600 w-10 text-right">${(f.importance*100).toFixed(1)}%</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Session counter
+  if (d.session_recording) {
+    document.getElementById('sess-count').textContent = d.session_count ?? 0;
+  }
+
+  // Baseline: only update the counter, never touch button visibility here
+  if (d.baseline_recording) {
+    document.getElementById('baseline-status').textContent =
+      `Запись… ${d.baseline_buffer ?? 0}/20`;
+  }
+}
+
+// Baseline controls
+
+function startBaseline() {
+  fetch('/api/baseline/start', { method: 'POST' }).then(() => {
+    document.getElementById('btn-baseline-start').classList.add('hidden');
+    document.getElementById('btn-baseline-stop').classList.remove('hidden');
+    document.getElementById('baseline-status').textContent = 'Запись… 0/20';
+  });
+}
+function stopBaseline() {
+  fetch('/api/baseline/stop', { method: 'POST' }).then(r => r.json()).then(d => {
+    document.getElementById('btn-baseline-stop').classList.add('hidden');
+    document.getElementById('btn-baseline-start').classList.remove('hidden');
+    if (d.status === 'calibrated') {
+      document.getElementById('baseline-status').textContent =
+        `✓ ЧСС ${d.bpm_mean} ± ${d.bpm_std}   Темп ${d.temp_mean}   n=${d.n_readings}`;
+    } else {
+      document.getElementById('baseline-status').textContent = d.detail || 'Ошибка';
+    }
+  });
+}
+
+// Session recording controls
+
+function startSession() {
+  const label = document.getElementById('session-label').value;
+  fetch('/api/session/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label }),
+  }).then(r => r.json()).then(d => {
+    document.getElementById('btn-sess-start').classList.add('hidden');
+    document.getElementById('btn-sess-stop').classList.remove('hidden');
+    document.getElementById('sess-timer-block').classList.remove('hidden');
+    document.getElementById('sess-status').textContent =
+      `Запись: ${label}  ID: ${d.session_id}`;
+  });
+}
+function stopSession() {
+  fetch('/api/session/stop', { method: 'POST' }).then(r => r.json()).then(d => {
+    document.getElementById('btn-sess-start').classList.remove('hidden');
+    document.getElementById('btn-sess-stop').classList.add('hidden');
+    document.getElementById('sess-timer-block').classList.add('hidden');
+    document.getElementById('sess-status').textContent =
+      d.session_id ? `✓ Сохранено: ${d.session_id}` : (d.detail || 'Ошибка');
+    loadSessions();
+  });
+}
+
+// Sessions list
+
+const LABEL_RU = { calm: 'Спокойствие', cognitive_load: 'Нагрузка', stressed: 'Стресс' };
+const LABEL_COLOR = { calm: 'text-emerald-400', cognitive_load: 'text-amber-400', stressed: 'text-red-400' };
+
+function loadSessions() {
+  fetch('/api/sessions').then(r => r.json()).then(d => {
+    const el = document.getElementById('sessions-table');
+    if (!d.sessions.length) {
+      el.innerHTML = '<p class="text-gray-600">Сессий пока нет</p>';
+      return;
+    }
+    el.innerHTML = `
+      <table class="w-full text-xs">
+        <thead><tr class="text-gray-600 border-b border-gray-800">
+          <th class="text-left pb-2">ID</th>
+          <th class="text-left pb-2">Метка</th>
+          <th class="text-right pb-2">Отсчётов</th>
+          <th class="text-right pb-2">Начало</th>
+        </tr></thead>
+        <tbody>
+          ${d.sessions.map(s => `
+            <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+              <td class="py-2 text-gray-600">${s.id}</td>
+              <td class="py-2 ${LABEL_COLOR[s.label] || 'text-gray-400'}">${LABEL_RU[s.label] || s.label}</td>
+              <td class="py-2 text-right text-gray-400">${s.readings_count}</td>
+              <td class="py-2 text-right text-gray-600">${s.started_at.slice(0,19).replace('T',' ')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  });
+}
+
+// Model tab
+
+let importanceChart = null;
+
+function loadModelTab() {
+  fetch('/api/model/status').then(r => r.json()).then(d => {
+    const el = document.getElementById('model-scores');
+    const scores = d.all_scores || {};
+    el.innerHTML = Object.entries(scores).map(([name, s]) => {
+      const isActive = name === d.active_model;
+      return `<div class="bg-gray-800/60 rounded-xl p-4 ${isActive ? 'border border-indigo-700/50' : 'border border-transparent'}">
+        <div class="text-xs text-gray-500 mb-1">${name.replace('_', ' ')} ${isActive ? '★' : ''}</div>
+        <div class="text-2xl font-light ${isActive ? 'text-indigo-300' : 'text-gray-400'}">
+          ${(s.cv_mean * 100).toFixed(1)}%
+        </div>
+        <div class="text-[10px] text-gray-600 mt-0.5">cv ± ${(s.cv_std * 100).toFixed(1)}%</div>
+      </div>`;
+    }).join('') || '<p class="col-span-2 text-gray-600 text-xs">Модель не обучена</p>';
+  });
+
+  fetch('/api/model/explain').then(r => r.json()).then(d => {
+    if (!d.features.length) return;
+    const labels  = d.features.map(f => f.label);
+    const values  = d.features.map(f => f.importance);
+    const colors  = values.map(v => `rgba(99,102,241,${0.3 + v * 4})`);
+
+    if (importanceChart) { importanceChart.destroy(); importanceChart = null; }
+    importanceChart = new Chart(document.getElementById('importance-chart'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] },
+      options: {
+        indexAxis: 'y',
+        animation: false,
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: '#111827' }, ticks: { color: '#4b5563', font: { size: 9 } } },
+          y: { grid: { display: false }, ticks: { color: '#9ca3af', font: { size: 10 } } },
+        },
+      },
+    });
+  });
+}
+
+function retrain() {
+  const btn = document.getElementById('btn-retrain');
+  const status = document.getElementById('retrain-status');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner inline-block w-3 h-3 border border-t-transparent border-indigo-400 rounded-full mr-1"></span>Обучаю…';
+  status.textContent = '';
+
+  fetch('/api/model/retrain', { method: 'POST' }).then(r => r.json()).then(d => {
+    btn.disabled = false;
+    btn.textContent = 'Переобучить';
+    status.textContent =
+      `✓ ${d.active_model?.replace('_',' ')}  acc=${(d.cv_accuracy*100).toFixed(1)}%  ` +
+      `реальных окон: ${d.real_windows}`;
+    loadModelTab();
+  }).catch(() => {
+    btn.disabled = false;
+    btn.textContent = 'Переобучить';
+    status.textContent = 'Ошибка';
+  });
+}
+
+// Mock generator controls
+
+const SCENARIO_RU = { calm: 'Спокойствие', cognitive_load: 'Нагрузка', stressed: 'Стресс' };
+
+function startMock() {
+  const scenario = document.getElementById('mock-scenario').value;
+  fetch('/api/mock/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scenario }),
+  }).then(r => r.json()).then(d => {
+    const el = document.getElementById('mock-status');
+    el.textContent = `▶ ${SCENARIO_RU[d.scenario] || d.scenario}`;
+    el.className = 'text-xs text-emerald-400';
+  });
+}
+
+function stopMock() {
+  fetch('/api/mock/stop', { method: 'POST' }).then(() => {
+    const el = document.getElementById('mock-status');
+    el.textContent = 'Остановлен';
+    el.className = 'text-xs text-gray-600';
+  });
+}
+
+// SSE connection with auto-reconnect
+
+const dot = document.getElementById('conn-dot');
+
+function connect() {
+  const es = new EventSource('/api/stream');
+  es.onopen    = () => dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 transition-colors duration-300';
+  es.onmessage = e  => updateMonitor(JSON.parse(e.data));
+  es.onerror   = () => {
+    dot.className = 'w-2.5 h-2.5 rounded-full bg-red-500 transition-colors duration-300';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+}
+
+connect();
+loadSessions();
+
+// Restore mock status after page refresh
+fetch('/api/mock/status').then(r => r.json()).then(d => {
+  if (d.running) {
+    document.getElementById('mock-scenario').value = d.scenario;
+    const el = document.getElementById('mock-status');
+    el.textContent = `▶ ${SCENARIO_RU[d.scenario] || d.scenario}`;
+    el.className = 'text-xs text-emerald-400';
+  }
+});
+
+// Restore baseline button state after page refresh
+fetch('/api/baseline/status').then(r => r.json()).then(d => {
+  if (d.recording) {
+    document.getElementById('btn-baseline-start').classList.add('hidden');
+    document.getElementById('btn-baseline-stop').classList.remove('hidden');
+    document.getElementById('baseline-status').textContent = `Запись… ${d.buffer_size}/20`;
+  } else if (d.calibrated && d.stats) {
+    document.getElementById('baseline-status').textContent =
+      `✓ ЧСС ${d.stats.bpm_mean} ± Темп ${d.stats.temp_mean}`;
+  }
+});
+</script>
+</body>
+</html>
