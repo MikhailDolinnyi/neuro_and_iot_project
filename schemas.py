@@ -24,6 +24,7 @@ class HealthSnapshot(BaseModel):
     temp_c: float = 0.0
     fsr_raw: int = 0
     fsr_pressed: bool = False
+    rr_intervals: list[int] = []  # RR-интервалы в мс, присланные Arduino за последние 3 с
 
 
 class FeatureContrib(BaseModel):
@@ -37,6 +38,8 @@ class Assessment(BaseModel):
     stress_level: str
     stress_score: Optional[float] = None
     confidence: Optional[float] = None
+    valence: Optional[float] = None   # −1 (негатив) … +1 (позитив)
+    arousal: Optional[float] = None   # 0 (покой) … 1 (высокое возбуждение)
     engine: str
     window_size: int
     explanation: list[FeatureContrib] = []

@@ -38,6 +38,10 @@ _MOCK_PARAMS: dict[str, dict] = {
     "cognitive_load": {"bpm_mu": 83.0, "bpm_sigma": 5.5,  "temp_mu": 36.45, "temp_sigma": 0.16, "fsr_mu": 270.0, "fsr_sigma":  85.0},
     "stressed":       {"bpm_mu": 98.0, "bpm_sigma": 8.0,  "temp_mu": 36.10, "temp_sigma": 0.20, "fsr_mu": 560.0, "fsr_sigma": 140.0},
 }
+# RMSSD (мс) по сценарию: чем выше стресс, тем ниже HRV
+_MOCK_RMSSD: dict[str, float] = {
+    "calm": 42.0, "cognitive_load": 26.0, "stressed": 12.0,
+}
 
 # Application state (module-level singletons shared across requests)
 
@@ -57,8 +61,8 @@ def _boot_model() -> None:
         print(f"[model] Loaded  engine={model.active_model}  cv_acc={model.cv_accuracy:.3f}")
         return
     print("[model] Training on synthetic data…")
-    X, y = generate_dataset()
-    acc = model.train(X, y)
+    X, X_win, y = generate_dataset()
+    acc = model.train(X, y, X_win)
     print(f"[model] Done  engine={model.active_model}  cv_acc={acc:.3f}  samples={len(y)}")
 
 
@@ -99,12 +103,22 @@ async def _mock_loop() -> None:
     temp = p["temp_mu"]
     try:
         while True:
-            p = _MOCK_PARAMS[_mock_scenario]
+            p     = _MOCK_PARAMS[_mock_scenario]
+            rmssd = _MOCK_RMSSD.get(_mock_scenario, 25.0)
+
             bpm  += (p["bpm_mu"]  - bpm)  * 0.1 + random.gauss(0, p["bpm_sigma"]  * 0.25)
             temp += (p["temp_mu"] - temp) * 0.05 + random.gauss(0, p["temp_sigma"] * 0.20)
             fsr   = max(0, min(1023, int(random.gauss(p["fsr_mu"], p["fsr_sigma"]))))
             bpm   = max(40.0, min(180.0, bpm))
             temp  = max(34.0, min(40.0,  temp))
+
+            # Симулируем RR-интервалы с реалистичным RMSSD для сценария
+            mean_rr = 60000.0 / bpm
+            sigma   = rmssd / (2 ** 0.5)
+            rr_intervals = [
+                max(300, min(2000, int(random.gauss(mean_rr, sigma))))
+                for _ in range(4)
+            ]
 
             snapshot = HealthSnapshot(
                 device="mock",
@@ -119,6 +133,7 @@ async def _mock_loop() -> None:
                 temp_c=round(temp, 3),
                 fsr_raw=fsr,
                 fsr_pressed=fsr > 200,
+                rr_intervals=rr_intervals,
             )
             await _process_reading(snapshot)
             await asyncio.sleep(MOCK_INTERVAL)
@@ -150,8 +165,12 @@ def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
         smoother.reset()
         return Assessment(stress_level="warming_up", engine="none", window_size=window.size())
 
-    label, score, conf = model.predict(window.as_list(), baseline=baseline.stats)
-    label, score, conf = smoother.update(label, score, conf)
+    label, score, conf, valence, arousal = model.predict(
+        window.as_list(), baseline=baseline.stats
+    )
+    label, score, conf, valence, arousal = smoother.update(
+        label, score, conf, valence, arousal
+    )
 
     explanation = [
         FeatureContrib(**f)
@@ -162,6 +181,8 @@ def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
         stress_level=label,
         stress_score=score,
         confidence=conf,
+        valence=valence,
+        arousal=arousal,
         engine="ml",
         window_size=window.size(),
         explanation=explanation,
@@ -180,6 +201,7 @@ async def _process_reading(snapshot: HealthSnapshot) -> Assessment:
         fsr_raw=snapshot.fsr_raw,
         bpm_valid=snapshot.bpm_valid,
         temp_valid=snapshot.temp_valid,
+        rr_intervals=[float(x) for x in snapshot.rr_intervals],
     )
 
     if baseline.is_recording:
@@ -205,6 +227,8 @@ async def _process_reading(snapshot: HealthSnapshot) -> Assessment:
         "temp_c": snapshot.temp_c,
         "fsr_raw": snapshot.fsr_raw,
         "state": snapshot.state,
+        "active_model": model.active_model,
+        "all_scores": model.all_scores,
         "baseline_recording": baseline.is_recording,
         "baseline_calibrated": baseline.is_calibrated,
         "baseline_buffer": baseline.buffer_size,
@@ -367,22 +391,46 @@ async def model_status() -> dict:
 
 
 @app.post("/api/model/retrain")
-async def retrain() -> dict:
-    syn_X, syn_y = await asyncio.to_thread(generate_dataset)
-    real_X, real_y = await asyncio.to_thread(session_mgr.build_training_data)
+async def retrain(body: dict = {}) -> dict:
+    """Переобучить модель.
 
-    if real_X is not None and len(real_X) > 0:
-        X = np.vstack([syn_X, np.repeat(real_X, 5, axis=0)])
-        y = np.concatenate([syn_y, np.tile(real_y, 5)])
-        real_count = len(real_X)
-    else:
-        X, y = syn_X, syn_y
-        real_count = 0
+    mode = "synthetic" — только синтетика (1800 окон, всегда доступно).
+    mode = "real"      — только записанные сессии (нужны хотя бы 3 сессии разных классов).
+    mode = "mixed"     — синтетика + сессии, сессии с весом ×5 (по умолчанию).
+    """
+    mode = body.get("mode", "mixed")
+    if mode not in ("synthetic", "real", "mixed"):
+        raise HTTPException(400, "mode must be synthetic | real | mixed")
 
-    acc = await asyncio.to_thread(model.train, X, y)
+    syn_X, syn_X_win, syn_y   = await asyncio.to_thread(generate_dataset)
+    real_X, real_X_win, real_y = await asyncio.to_thread(session_mgr.build_training_data)
+
+    real_count = len(real_X) if real_X is not None else 0
+
+    if mode == "synthetic":
+        X, X_win, y = syn_X, syn_X_win, syn_y
+
+    elif mode == "real":
+        if real_X is None or real_count == 0:
+            raise HTTPException(400, "Нет записанных сессий. Сначала запиши сессии во вкладке «Сессии».")
+        classes_present = set(real_y)
+        if len(classes_present) < 2:
+            raise HTTPException(400, f"Нужны сессии минимум двух классов, есть только: {classes_present}")
+        X, X_win, y = real_X, real_X_win, real_y
+
+    else:  # mixed
+        if real_X is not None and real_count > 0:
+            X     = np.vstack([syn_X,     np.repeat(real_X,     5, axis=0)])
+            X_win = np.vstack([syn_X_win, np.repeat(real_X_win, 5, axis=0)])
+            y     = np.concatenate([syn_y, np.tile(real_y, 5)])
+        else:
+            X, X_win, y = syn_X, syn_X_win, syn_y
+
+    acc = await asyncio.to_thread(model.train, X, y, X_win)
     smoother.reset()
 
     return {
+        "mode": mode,
         "cv_accuracy": round(float(acc), 4),
         "active_model": model.active_model,
         "all_scores": model.all_scores,
@@ -401,6 +449,21 @@ async def model_explain() -> dict:
         for n, imp in zip(FEATURE_NAMES, model.feature_importances)
     ]
     return {"features": sorted(items, key=lambda x: x["importance"], reverse=True)}
+
+
+@app.post("/api/model/select")
+async def model_select(body: dict) -> dict:
+    """Принудительно выбрать движок: random_forest | gradient_boosting | rocket."""
+    name = body.get("model", "")
+    available = list(model.all_scores.keys())
+    if name not in available:
+        raise HTTPException(400, f"model must be one of {available}")
+    if name == "rocket" and model._rocket is None:
+        raise HTTPException(400, "ROCKET не обучен — запустите /api/model/retrain сначала")
+    model.active_model = name
+    smoother.reset()
+    return {"status": "ok", "active_model": model.active_model,
+            "cv_mean": model.all_scores[name]["cv_mean"]}
 
 
 @app.post("/api/window/reset")

@@ -76,12 +76,20 @@ class SessionManager:
                 continue
         return sessions
 
-    def build_training_data(self) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-        """Extract windowed features from all saved sessions for retraining."""
+    def build_training_data(
+        self,
+    ) -> tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+        """Извлечь оконные признаки из всех сохранённых сессий.
+
+        Возвращает (X_tab, X_win, y):
+          X_tab — табличные признаки (n, 16) для RF/GBM.
+          X_win — сырые временные ряды  (n, window_size, 3) для ROCKET.
+          y     — метки классов.
+        """
         from .features import extract_features
         from .window import Reading
 
-        X, y = [], []
+        X_tab, X_win, y = [], [], []
         for f in SESSIONS_DIR.glob("*.json"):
             try:
                 data = json.loads(f.read_text())
@@ -89,7 +97,6 @@ class SessionManager:
                 label = data["label"]
                 if len(raw) < WINDOW_SIZE:
                     continue
-                # 50 % overlapping windows
                 step = max(1, WINDOW_SIZE // 2)
                 for i in range(0, len(raw) - WINDOW_SIZE + 1, step):
                     chunk = raw[i: i + WINDOW_SIZE]
@@ -100,11 +107,21 @@ class SessionManager:
                         )
                         for r in chunk
                     ]
-                    X.append(extract_features(readings))
+                    X_tab.append(extract_features(readings))
+
+                    bpm_arr  = np.array([r["bpm"]     for r in chunk], dtype=float)
+                    temp_arr = np.array([r["temp_c"]  for r in chunk], dtype=float)
+                    fsr_arr  = np.array([r["fsr_raw"] for r in chunk], dtype=float)
+                    X_win.append(np.column_stack([bpm_arr, temp_arr, fsr_arr]))
+
                     y.append(label)
             except Exception:
                 continue
 
-        if not X:
-            return None, None
-        return np.array(X, dtype=float), np.array(y)
+        if not X_tab:
+            return None, None, None
+        return (
+            np.array(X_tab, dtype=float),
+            np.array(X_win, dtype=float),
+            np.array(y),
+        )

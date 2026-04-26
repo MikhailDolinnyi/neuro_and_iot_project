@@ -71,6 +71,16 @@ unsigned long fingerAcquiredAt = 0;
 long lastIrValue = 0;
 
 // =========================
+// RR-интервалы (мс между ударами)
+// Буфер последних RR_BUF_SIZE интервалов — кольцевой.
+// Backend вычисляет из них RMSSD, SDNN, pNN50.
+// =========================
+const byte RR_BUF_SIZE = 8;
+uint16_t rrBuffer[RR_BUF_SIZE];
+byte rrHead  = 0;
+byte rrCount = 0;
+
+// =========================
 // DS18B20
 // =========================
 #define ONE_WIRE_BUS D5
@@ -153,6 +163,13 @@ void resetBpmBuffer() {
 
   for (byte i = 0; i < RATE_SIZE; i++) {
     rates[i] = 0;
+  }
+
+  // Сбросить RR-буфер вместе с BPM-буфером
+  rrHead  = 0;
+  rrCount = 0;
+  for (byte i = 0; i < RR_BUF_SIZE; i++) {
+    rrBuffer[i] = 0;
   }
 }
 
@@ -351,6 +368,39 @@ const char* getStateString() {
 }
 
 // =========================
+// RR helpers
+// =========================
+
+// Добавить RR-интервал (мс) в кольцевой буфер
+void addRRInterval(unsigned long deltaMs) {
+  // Физиологически допустимый диапазон: ~300–2000 мс (30–200 уд/мин)
+  if (deltaMs < 300 || deltaMs > 2000) return;
+  rrBuffer[rrHead] = (uint16_t)deltaMs;
+  rrHead = (rrHead + 1) % RR_BUF_SIZE;
+  if (rrCount < RR_BUF_SIZE) rrCount++;
+}
+
+// Сформировать JSON-массив вида [850,820,870] из кольцевого буфера
+void buildRRJson(char* buf, size_t bufLen) {
+  if (rrCount == 0) {
+    strncpy(buf, "[]", bufLen);
+    return;
+  }
+  char* p   = buf;
+  char* end = buf + bufLen - 2;   // оставляем место для ']' и '\0'
+  *p++ = '[';
+  byte start = (rrHead + RR_BUF_SIZE - rrCount) % RR_BUF_SIZE;
+  for (byte i = 0; i < rrCount; i++) {
+    if (p >= end - 6) break;      // защита от переполнения (макс. 5 цифр + ',')
+    if (i > 0) *p++ = ',';
+    byte idx = (start + i) % RR_BUF_SIZE;
+    p += snprintf(p, end - p, "%u", rrBuffer[idx]);
+  }
+  *p++ = ']';
+  *p   = '\0';
+}
+
+// =========================
 // MQTT publish
 // =========================
 void publishUnifiedSnapshot(bool force = false) {
@@ -361,28 +411,49 @@ void publishUnifiedSnapshot(bool force = false) {
   int fsrRaw = readFsrAveraged();
   bool fsrPressed = fsrRaw >= FSR_PRESSED_THRESHOLD;
 
-  bool warmup = isWarmupActive();
+  bool warmup  = isWarmupActive();
   bool bpmValid = isBpmValid();
 
-  char payload[256];
+  // RR-массив строится отдельно, затем вставляется через %s
+  char rrJson[52];
+  buildRRJson(rrJson, sizeof(rrJson));
+
+  char payload[512];
 
   snprintf(
     payload,
     sizeof(payload),
-    "{\"device\":\"online\",\"state\":\"%s\",\"max30102_ready\":%s,\"finger\":%s,\"warmup\":%s,\"ir\":%ld,\"bpm_valid\":%s,\"bpm_current\":%.1f,\"bpm_avg\":%d,\"bpm_samples\":%d,\"temp_valid\":%s,\"temp_c\":%.2f,\"fsr_raw\":%d,\"fsr_pressed\":%s}",
+    "{"
+      "\"device\":\"online\","
+      "\"state\":\"%s\","
+      "\"max30102_ready\":%s,"
+      "\"finger\":%s,"
+      "\"warmup\":%s,"
+      "\"ir\":%ld,"
+      "\"bpm_valid\":%s,"
+      "\"bpm_current\":%.1f,"
+      "\"bpm_avg\":%d,"
+      "\"bpm_samples\":%d,"
+      "\"temp_valid\":%s,"
+      "\"temp_c\":%.2f,"
+      "\"fsr_raw\":%d,"
+      "\"fsr_pressed\":%s,"
+      "\"rr_intervals\":%s"
+    "}",
     getStateString(),
-    max30102Ready ? "true" : "false",
+    max30102Ready  ? "true" : "false",
     fingerDetected ? "true" : "false",
-    warmup ? "true" : "false",
+    warmup         ? "true" : "false",
     lastIrValue,
-    bpmValid ? "true" : "false",
-    bpmValid ? lastCurrentBpm : 0.0,
-    bpmValid ? beatAvg : 0,
+    bpmValid       ? "true" : "false",
+    bpmValid       ? lastCurrentBpm : 0.0,
+    bpmValid       ? beatAvg : 0,
     validSamples,
-    lastTempValid ? "true" : "false",
-    lastTempValid ? lastTempC : 0.0,
+    lastTempValid  ? "true" : "false",
+    lastTempValid  ? lastTempC : 0.0,
     fsrRaw,
-    fsrPressed ? "true" : "false"
+    fsrPressed     ? "true" : "false",
+    rrJson
   );
 
   mqttClient.publish(TOPIC_DATA, payload, true);
@@ -593,10 +664,11 @@ void loop() {
       unsigned long delta = now - lastBeat;
 
       if (delta > 0) {
-        beatsPerMinute = 60.0 / (delta / 1000.0);
+        beatsPerMinute = 60000.0 / delta;
 
         if (beatsPerMinute > 20 && beatsPerMinute < 255) {
           addBpmSample((byte)beatsPerMinute);
+          addRRInterval(delta);   // сохранить интервал между ударами
 
           lastCurrentBpm = beatsPerMinute;
           lastValidBpmAt = now;
@@ -607,6 +679,9 @@ void loop() {
           Serial.print(lastCurrentBpm);
           Serial.print(", Avg BPM=");
           Serial.print(beatAvg);
+          Serial.print(", RR=");
+          Serial.print(delta);
+          Serial.print("ms");
 
           if (validSamples < RATE_SIZE) {
             Serial.print(" [samples ");

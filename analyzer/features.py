@@ -9,28 +9,53 @@ from .window import Reading
 if TYPE_CHECKING:
     from .baseline import BaselineStats
 
-# 9 абсолютных + 3 относительных (к базлайну) = 12 признаков
+# 9 абсолютных + 3 относительных (к базлайну) + 4 HRV = 16 признаков
 FEATURE_NAMES = [
     "bpm_mean", "bpm_std", "bpm_range", "bpm_trend",
     "temp_mean", "temp_std", "temp_trend",
     "fsr_mean", "fsr_std",
     "bpm_z", "temp_delta", "fsr_delta",
+    "hrv_rmssd", "hrv_sdnn", "hrv_pnn50", "hrv_mean_rr",
 ]
 
 FEATURE_LABELS = {
-    "bpm_mean":   "Средний пульс",
-    "bpm_std":    "Вариация пульса",
-    "bpm_range":  "Размах пульса",
-    "bpm_trend":  "Тренд пульса",
-    "temp_mean":  "Средняя температура",
-    "temp_std":   "Вариация температуры",
-    "temp_trend": "Тренд температуры",
-    "fsr_mean":   "Среднее давление",
-    "fsr_std":    "Вариация давления",
-    "bpm_z":      "Пульс (откл. базлайн)",
-    "temp_delta": "Температура (откл. базлайн)",
-    "fsr_delta":  "Давление (откл. базлайн)",
+    "bpm_mean":    "Средний пульс",
+    "bpm_std":     "Вариация пульса",
+    "bpm_range":   "Размах пульса",
+    "bpm_trend":   "Тренд пульса",
+    "temp_mean":   "Средняя температура",
+    "temp_std":    "Вариация температуры",
+    "temp_trend":  "Тренд температуры",
+    "fsr_mean":    "Среднее давление",
+    "fsr_std":     "Вариация давления",
+    "bpm_z":       "Пульс (откл. базлайн)",
+    "temp_delta":  "Температура (откл. базлайн)",
+    "fsr_delta":   "Давление (откл. базлайн)",
+    "hrv_rmssd":   "HRV RMSSD (мс)",
+    "hrv_sdnn":    "HRV SDNN (мс)",
+    "hrv_pnn50":   "HRV pNN50 (%)",
+    "hrv_mean_rr": "Средний RR-интервал (мс)",
 }
+
+
+def _hrv_features(readings: list[Reading]) -> tuple[float, float, float, float]:
+    """RMSSD, SDNN, pNN50, mean_rr — из RR-интервалов всего окна.
+
+    RMSSD ↓ при стрессе (симпатика подавляет вариабельность).
+    SDNN — общая мера вариабельности.
+    pNN50 — доля пар, разница которых > 50 мс.
+    mean_rr — обратно пропорционален пульсу.
+    """
+    rr = np.concatenate([r.rr_intervals for r in readings if r.rr_intervals])
+    if len(rr) < 2:
+        return 0.0, 0.0, 0.0, 0.0
+
+    mean_rr = float(rr.mean())
+    sdnn = float(rr.std())
+    diffs = np.abs(np.diff(rr))
+    rmssd = float(np.sqrt(np.mean(diffs ** 2)))
+    pnn50 = float(np.mean(diffs > 50.0))
+    return rmssd, sdnn, pnn50, mean_rr
 
 
 def extract_features(
@@ -61,4 +86,10 @@ def extract_features(
     else:
         bpm_z = temp_delta = fsr_delta = 0.0
 
-    return np.array(bpm_feats + temp_feats + fsr_feats + [bpm_z, temp_delta, fsr_delta], dtype=float)
+    rmssd, sdnn, pnn50, mean_rr = _hrv_features(readings)
+
+    return np.array(
+        bpm_feats + temp_feats + fsr_feats + [bpm_z, temp_delta, fsr_delta]
+        + [rmssd, sdnn, pnn50, mean_rr],
+        dtype=float,
+    )

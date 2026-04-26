@@ -144,6 +144,19 @@
                 class="text-xs border border-gray-700 hover:border-red-700
                        hover:text-red-400 px-3 py-1.5 rounded-lg transition-colors">■</button>
       </div>
+
+      <!-- Быстрый выбор модели прямо в мониторе -->
+      <div class="border-t border-gray-800/50 pt-2.5 mt-1">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-[10px] text-gray-600 uppercase tracking-[.2em]">Модель</span>
+          <span id="active-model-badge"
+                class="text-[10px] text-indigo-400 font-medium tracking-wide">—</span>
+        </div>
+        <div id="monitor-model-btns" class="flex gap-1.5 flex-wrap">
+          <span class="text-[10px] text-gray-700">Загрузка…</span>
+        </div>
+        <div id="monitor-select-status" class="text-[10px] text-gray-600 mt-1"></div>
+      </div>
     </div>
   </div>
 
@@ -218,10 +231,15 @@
 <!-- Model tab -->
 <div id="tab-model" class="tab-pane hidden p-5 max-w-4xl mx-auto space-y-5">
 
-  <!-- Scores -->
+  <!-- Scores + selector -->
   <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
-    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-4">Метрики моделей</p>
+    <div class="flex items-center justify-between mb-4">
+      <p class="text-[10px] text-gray-600 uppercase tracking-[.2em]">Метрики моделей</p>
+      <p class="text-[10px] text-gray-600">Нажми на карточку — переключить</p>
+    </div>
     <div id="model-scores" class="grid grid-cols-2 gap-4"></div>
+    <div id="model-tab-model-btns" class="flex gap-2 flex-wrap mt-3"></div>
+    <div id="model-select-status" class="mt-2 text-xs text-gray-600"></div>
   </div>
 
   <!-- Feature importance -->
@@ -231,19 +249,77 @@
   </div>
 
   <!-- Retrain -->
-  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
-    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em] mb-3">Переобучение</p>
-    <p class="text-xs text-gray-500 mb-4">
-      Переобучает модель на синтетических данных + записанных сессиях (вес 5:1 в пользу реальных).
-    </p>
-    <div class="flex items-center gap-4">
-      <button onclick="retrain()" id="btn-retrain"
-              class="px-5 py-2 text-sm bg-indigo-700/30 border border-indigo-700/50
-                     hover:bg-indigo-700/50 rounded-lg transition-colors">
-        Переобучить
-      </button>
-      <div id="retrain-status" class="text-xs text-gray-600"></div>
+  <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">
+    <p class="text-[10px] text-gray-600 uppercase tracking-[.2em]">Переобучение</p>
+
+    <!-- Режимы -->
+    <div class="grid grid-cols-1 gap-3">
+
+      <!-- Синтетика -->
+      <div class="border border-gray-800 rounded-xl p-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm text-gray-300 font-medium mb-1">Только синтетика</p>
+            <p class="text-xs text-gray-600">
+              1 800 окон, сгенерированных кодом. Всегда доступно,
+              не нужны датчики. RF/GBM получают ~100% — данные слишком чистые.
+              Хорошо для первого запуска и проверки pipeline.
+            </p>
+          </div>
+          <button onclick="retrain('synthetic')" data-mode="synthetic"
+                  class="retrain-btn shrink-0 px-4 py-2 text-xs bg-gray-800 border border-gray-700
+                         hover:border-gray-500 hover:text-white rounded-lg transition-colors whitespace-nowrap">
+            Обучить
+          </button>
+        </div>
+      </div>
+
+      <!-- Реальные -->
+      <div class="border border-gray-800 rounded-xl p-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm text-gray-300 font-medium mb-1">Только реальные сессии</p>
+            <p class="text-xs text-gray-600">
+              Только твои записанные сессии из вкладки «Сессии».
+              Нужны сессии минимум двух разных классов.
+              Точность ниже, зато модель учится на настоящих данных —
+              здесь ROCKET может обогнать RF.
+            </p>
+          </div>
+          <button onclick="retrain('real')" data-mode="real"
+                  class="retrain-btn shrink-0 px-4 py-2 text-xs bg-gray-800 border border-gray-700
+                         hover:border-gray-500 hover:text-white rounded-lg transition-colors whitespace-nowrap">
+            Обучить
+          </button>
+        </div>
+      </div>
+
+      <!-- Смешанный -->
+      <div class="border border-indigo-900/40 rounded-xl p-4 bg-indigo-950/10">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm text-indigo-300 font-medium mb-1">
+              Синтетика + реальные
+              <span class="text-[10px] text-indigo-600 ml-1">рекомендуется</span>
+            </p>
+            <p class="text-xs text-gray-600">
+              Синтетика как база + твои сессии с весом ×5.
+              Модель не теряет общее понимание физиологии,
+              но подстраивается под реальные паттерны.
+              Если сессий нет — работает как «Только синтетика».
+            </p>
+          </div>
+          <button onclick="retrain('mixed')" data-mode="mixed"
+                  class="retrain-btn shrink-0 px-4 py-2 text-xs bg-indigo-700/30 border border-indigo-700/50
+                         hover:bg-indigo-700/50 rounded-lg transition-colors whitespace-nowrap">
+            Обучить
+          </button>
+        </div>
+      </div>
+
     </div>
+
+    <div id="retrain-status" class="text-xs text-gray-600 pt-1"></div>
   </div>
 </div>
 
@@ -368,6 +444,15 @@ function updateMonitor(d) {
     document.getElementById('sess-count').textContent = d.session_count ?? 0;
   }
 
+  // Обновить бейдж и кнопки модели из SSE без отдельного fetch
+  if (d.active_model) {
+    const badge = document.getElementById('active-model-badge');
+    if (badge) badge.textContent = MODEL_NAMES[d.active_model] || d.active_model;
+    if (d.all_scores) {
+      renderModelButtons(d.all_scores, d.active_model, 'monitor-model-btns', 'monitor-select-status');
+    }
+  }
+
   // Baseline: only update the counter, never touch button visibility here
   if (d.baseline_recording) {
     document.getElementById('baseline-status').textContent =
@@ -461,27 +546,92 @@ function loadSessions() {
 
 let importanceChart = null;
 
-function loadModelTab() {
-  fetch('/api/model/status').then(r => r.json()).then(d => {
-    const el = document.getElementById('model-scores');
-    const scores = d.all_scores || {};
-    el.innerHTML = Object.entries(scores).map(([name, s]) => {
-      const isActive = name === d.active_model;
-      return `<div class="bg-gray-800/60 rounded-xl p-4 ${isActive ? 'border border-indigo-700/50' : 'border border-transparent'}">
-        <div class="text-xs text-gray-500 mb-1">${name.replace('_', ' ')} ${isActive ? '★' : ''}</div>
-        <div class="text-2xl font-light ${isActive ? 'text-indigo-300' : 'text-gray-400'}">
-          ${(s.cv_mean * 100).toFixed(1)}%
-        </div>
-        <div class="text-[10px] text-gray-600 mt-0.5">cv ± ${(s.cv_std * 100).toFixed(1)}%</div>
-      </div>`;
-    }).join('') || '<p class="col-span-2 text-gray-600 text-xs">Модель не обучена</p>';
+const MODEL_NAMES = {
+  random_forest:     'Random Forest',
+  gradient_boosting: 'Gradient Boost',
+  rocket:            'ROCKET',
+};
+
+function renderModelButtons(scores, activeModel, containerTabId, statusId) {
+  const container = document.getElementById(containerTabId);
+  if (!container) return;
+  container.innerHTML = Object.entries(scores).map(([name, s]) => {
+    const isActive = name === activeModel;
+    return `<button onclick="selectModel('${name}')"
+      title="cv accuracy: ${(s.cv_mean*100).toFixed(1)}% ± ${(s.cv_std*100).toFixed(1)}%"
+      class="flex flex-col items-center px-3 py-1.5 rounded-lg text-xs border transition-colors cursor-pointer
+             ${isActive
+               ? 'bg-indigo-700/30 border-indigo-600 text-indigo-300'
+               : 'border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200'}">
+      <span>${MODEL_NAMES[name] || name}</span>
+      <span class="text-[9px] opacity-60 mt-0.5">${(s.cv_mean*100).toFixed(1)}%</span>
+    </button>`;
+  }).join('');
+}
+
+function selectModel(name) {
+  fetch('/api/model/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: name }),
+  }).then(r => r.json()).then(d => {
+    const msg = d.status === 'ok'
+      ? `✓ Активна: ${MODEL_NAMES[d.active_model] || d.active_model}  (${(d.cv_mean*100).toFixed(1)}%)`
+      : (d.detail || 'Ошибка');
+    ['model-select-status', 'monitor-select-status'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = msg;
+    });
+    loadModelStatus();
+  }).catch(() => {
+    ['model-select-status', 'monitor-select-status'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = 'Ошибка соединения';
+    });
   });
+}
+
+function loadModelStatus() {
+  fetch('/api/model/status').then(r => r.json()).then(d => {
+    const scores = d.all_scores || {};
+    // Обновить кнопки в обоих местах
+    renderModelButtons(scores, d.active_model, 'monitor-model-btns',    'monitor-select-status');
+    renderModelButtons(scores, d.active_model, 'model-tab-model-btns',  'model-select-status');
+    // Бейдж в мониторе
+    const badge = document.getElementById('active-model-badge');
+    if (badge) badge.textContent = MODEL_NAMES[d.active_model] || d.active_model || '—';
+    // Карточки в Model-табе
+    const scoresEl = document.getElementById('model-scores');
+    if (scoresEl) {
+      scoresEl.innerHTML = Object.entries(scores).map(([name, s]) => {
+        const isActive = name === d.active_model;
+        return `<button onclick="selectModel('${name}')"
+          class="text-left bg-gray-800/60 rounded-xl p-4 transition-colors cursor-pointer
+                 hover:bg-gray-800
+                 ${isActive ? 'border border-indigo-700/50' : 'border border-transparent'}">
+          <div class="text-xs text-gray-500 mb-1">
+            ${MODEL_NAMES[name] || name} ${isActive ? '<span class="text-indigo-400">★ активна</span>' : ''}
+          </div>
+          <div class="text-2xl font-light ${isActive ? 'text-indigo-300' : 'text-gray-400'}">
+            ${(s.cv_mean * 100).toFixed(1)}%
+          </div>
+          <div class="text-[10px] text-gray-600 mt-0.5">
+            cv ± ${(s.cv_std * 100).toFixed(1)}%
+          </div>
+        </button>`;
+      }).join('') || '<p class="col-span-2 text-gray-600 text-xs">Модель не обучена</p>';
+    }
+  });
+}
+
+function loadModelTab() {
+  loadModelStatus();
 
   fetch('/api/model/explain').then(r => r.json()).then(d => {
     if (!d.features.length) return;
-    const labels  = d.features.map(f => f.label);
-    const values  = d.features.map(f => f.importance);
-    const colors  = values.map(v => `rgba(99,102,241,${0.3 + v * 4})`);
+    const labels = d.features.map(f => f.label);
+    const values = d.features.map(f => f.importance);
+    const colors = values.map(v => `rgba(99,102,241,${0.3 + v * 4})`);
 
     if (importanceChart) { importanceChart.destroy(); importanceChart = null; }
     importanceChart = new Chart(document.getElementById('importance-chart'), {
@@ -501,24 +651,40 @@ function loadModelTab() {
   });
 }
 
-function retrain() {
-  const btn = document.getElementById('btn-retrain');
-  const status = document.getElementById('retrain-status');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner inline-block w-3 h-3 border border-t-transparent border-indigo-400 rounded-full mr-1"></span>Обучаю…';
+const MODE_RU = { synthetic: 'Только синтетика', real: 'Только реальные', mixed: 'Смешанный' };
+
+function retrain(mode) {
+  const status  = document.getElementById('retrain-status');
+  const allBtns = document.querySelectorAll('.retrain-btn');
+
+  allBtns.forEach(b => { b.disabled = true; });
+  // Подсветить активную кнопку спиннером
+  const activeBtn = document.querySelector(`.retrain-btn[data-mode="${mode}"]`);
+  if (activeBtn) {
+    activeBtn.innerHTML =
+      '<span class="spinner inline-block w-3 h-3 border border-t-transparent border-current rounded-full mr-1"></span>Обучаю…';
+  }
   status.textContent = '';
 
-  fetch('/api/model/retrain', { method: 'POST' }).then(r => r.json()).then(d => {
-    btn.disabled = false;
-    btn.textContent = 'Переобучить';
+  fetch('/api/model/retrain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  }).then(r => r.json()).then(d => {
+    allBtns.forEach(b => { b.disabled = false; b.textContent = 'Обучить'; });
+    if (d.detail) {
+      status.textContent = '✗ ' + d.detail;
+      return;
+    }
+    const modeLabel = MODE_RU[d.mode] || d.mode;
+    const realNote  = d.real_windows > 0 ? `  реальных окон: ${d.real_windows}` : '';
     status.textContent =
-      `✓ ${d.active_model?.replace('_',' ')}  acc=${(d.cv_accuracy*100).toFixed(1)}%  ` +
-      `реальных окон: ${d.real_windows}`;
+      `✓ ${modeLabel}  →  ${MODEL_NAMES[d.active_model] || d.active_model}` +
+      `  acc=${(d.cv_accuracy*100).toFixed(1)}%${realNote}`;
     loadModelTab();
-  }).catch(() => {
-    btn.disabled = false;
-    btn.textContent = 'Переобучить';
-    status.textContent = 'Ошибка';
+  }).catch(err => {
+    allBtns.forEach(b => { b.disabled = false; b.textContent = 'Обучить'; });
+    status.textContent = '✗ Ошибка соединения';
   });
 }
 
@@ -564,6 +730,7 @@ function connect() {
 
 connect();
 loadSessions();
+loadModelStatus();
 
 // Restore mock status after page refresh
 fetch('/api/mock/status').then(r => r.json()).then(d => {

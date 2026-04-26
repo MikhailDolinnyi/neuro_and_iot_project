@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 WINDOW_MAXLEN = 25   # ~75 с при интервале 3 с
 MIN_WINDOW_SIZE = 8  # минимум для первого предсказания
@@ -14,6 +14,7 @@ class Reading:
     fsr_raw: int
     bpm_valid: bool
     temp_valid: bool
+    rr_intervals: list[float] = field(default_factory=list)  # RR-интервалы в мс между ударами
 
 
 class SlidingWindow:
