@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from analyzer.baseline import BaselineCalibrator
 from analyzer.model import StressModel
-from analyzer.session_manager import SessionManager
+from analyzer.session_manager import SessionManager, list_all, build_training_data
 from analyzer.smoother import PredictionSmoother
 from analyzer.synthetic import generate_dataset
 from analyzer.window import SlidingWindow, Reading
@@ -34,9 +34,9 @@ MQTT_TOPIC    = "sensor/health/data"
 MOCK_INTERVAL = float(os.getenv("MOCK_INTERVAL", "1.0"))
 
 _MOCK_PARAMS: dict[str, dict] = {
-    "calm":           {"bpm_mu": 68.0, "bpm_sigma": 4.0,  "temp_mu": 36.75, "temp_sigma": 0.12, "fsr_mu":  85.0, "fsr_sigma":  35.0},
-    "cognitive_load": {"bpm_mu": 83.0, "bpm_sigma": 5.5,  "temp_mu": 36.45, "temp_sigma": 0.16, "fsr_mu": 270.0, "fsr_sigma":  85.0},
-    "stressed":       {"bpm_mu": 98.0, "bpm_sigma": 8.0,  "temp_mu": 36.10, "temp_sigma": 0.20, "fsr_mu": 560.0, "fsr_sigma": 140.0},
+    "calm":           {"bpm_mu": 68.0, "bpm_sigma": 4.0,  "temp_mu": 36.75, "temp_sigma": 0.12, "fsr_mu":  20.0, "fsr_sigma":  15.0},
+    "cognitive_load": {"bpm_mu": 83.0, "bpm_sigma": 5.5,  "temp_mu": 36.45, "temp_sigma": 0.16, "fsr_mu":  60.0, "fsr_sigma":  40.0},
+    "stressed":       {"bpm_mu": 98.0, "bpm_sigma": 8.0,  "temp_mu": 36.10, "temp_sigma": 0.20, "fsr_mu": 120.0, "fsr_sigma":  60.0},
 }
 # RMSSD (мс) по сценарию: чем выше стресс, тем ниже HRV
 _MOCK_RMSSD: dict[str, float] = {
@@ -60,6 +60,7 @@ def _boot_model() -> None:
     if model.load():
         print(f"[model] Loaded  engine={model.active_model}  cv_acc={model.cv_accuracy:.3f}")
         return
+
     print("[model] Training on synthetic data…")
     X, X_win, y = generate_dataset()
     acc = model.train(X, y, X_win)
@@ -70,14 +71,14 @@ def _boot_model() -> None:
 
 
 def _start_mqtt(loop: asyncio.AbstractEventLoop) -> None:
-    def on_connect(client, userdata, flags, reason_code, properties):
+    def on_connect(client, reason_code):
         if reason_code == 0:
             client.subscribe(MQTT_TOPIC)
             print(f"[mqtt] Connected  broker={MQTT_BROKER}:{MQTT_PORT}  topic={MQTT_TOPIC}")
         else:
             print(f"[mqtt] Connect failed  rc={reason_code}")
 
-    def on_message(client, userdata, msg):
+    def on_message(msg):
         try:
             snapshot = HealthSnapshot.model_validate_json(msg.payload)
             asyncio.run_coroutine_threadsafe(_process_reading(snapshot), loop)
@@ -218,6 +219,7 @@ async def _process_reading(snapshot: HealthSnapshot) -> Assessment:
             temp_c=snapshot.temp_c,
             fsr_raw=snapshot.fsr_raw,
             stress_score=assessment.stress_score,
+            rr_intervals=[float(x) for x in snapshot.rr_intervals],
         )
 
     event: dict = {
@@ -342,7 +344,7 @@ async def session_status() -> dict:
 
 @app.get("/api/sessions")
 async def list_sessions() -> dict:
-    return {"sessions": session_mgr.list_all()}
+    return {"sessions": list_all()}
 
 
 @app.get("/api/mock/status")
@@ -391,42 +393,44 @@ async def model_status() -> dict:
 
 
 @app.post("/api/model/retrain")
-async def retrain(body: dict = {}) -> dict:
+async def retrain(body: dict = None) -> dict:
     """Переобучить модель.
 
     mode = "synthetic" — только синтетика (1800 окон, всегда доступно).
     mode = "real"      — только записанные сессии (нужны хотя бы 3 сессии разных классов).
     mode = "mixed"     — синтетика + сессии, сессии с весом ×5 (по умолчанию).
     """
+    if body is None:
+        body = {}
     mode = body.get("mode", "mixed")
     if mode not in ("synthetic", "real", "mixed"):
         raise HTTPException(400, "mode must be synthetic | real | mixed")
 
-    syn_X, syn_X_win, syn_y   = await asyncio.to_thread(generate_dataset)
-    real_X, real_X_win, real_y = await asyncio.to_thread(session_mgr.build_training_data)
+    syn_x, syn_x_win, syn_y   = await asyncio.to_thread(generate_dataset)
+    real_x, real_x_win, real_y = await asyncio.to_thread(build_training_data)
 
-    real_count = len(real_X) if real_X is not None else 0
+    real_count = len(real_x) if real_x is not None else 0
 
     if mode == "synthetic":
-        X, X_win, y = syn_X, syn_X_win, syn_y
+        x, x_win, y = syn_x, syn_x_win, syn_y
 
     elif mode == "real":
-        if real_X is None or real_count == 0:
+        if real_x is None or real_count == 0:
             raise HTTPException(400, "Нет записанных сессий. Сначала запиши сессии во вкладке «Сессии».")
         classes_present = set(real_y)
         if len(classes_present) < 2:
             raise HTTPException(400, f"Нужны сессии минимум двух классов, есть только: {classes_present}")
-        X, X_win, y = real_X, real_X_win, real_y
+        x, x_win, y = real_x, real_x_win, real_y
 
     else:  # mixed
-        if real_X is not None and real_count > 0:
-            X     = np.vstack([syn_X,     np.repeat(real_X,     5, axis=0)])
-            X_win = np.vstack([syn_X_win, np.repeat(real_X_win, 5, axis=0)])
+        if real_x is not None and real_count > 0:
+            x     = np.vstack([syn_x,     np.repeat(real_x,     5, axis=0)])
+            x_win = np.vstack([syn_x_win, np.repeat(real_x_win, 5, axis=0)])
             y     = np.concatenate([syn_y, np.tile(real_y, 5)])
         else:
-            X, X_win, y = syn_X, syn_X_win, syn_y
+            x, x_win, y = syn_x, syn_x_win, syn_y
 
-    acc = await asyncio.to_thread(model.train, X, y, X_win)
+    acc = await asyncio.to_thread(model.train, x, y, x_win)
     smoother.reset()
 
     return {
@@ -458,7 +462,7 @@ async def model_select(body: dict) -> dict:
     available = list(model.all_scores.keys())
     if name not in available:
         raise HTTPException(400, f"model must be one of {available}")
-    if name == "rocket" and model._rocket is None:
+    if name == "rocket" and model.rocket is None:
         raise HTTPException(400, "ROCKET не обучен — запустите /api/model/retrain сначала")
     model.active_model = name
     smoother.reset()

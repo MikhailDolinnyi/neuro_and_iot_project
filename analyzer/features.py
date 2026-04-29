@@ -46,15 +46,29 @@ def _hrv_features(readings: list[Reading]) -> tuple[float, float, float, float]:
     pNN50 — доля пар, разница которых > 50 мс.
     mean_rr — обратно пропорционален пульсу.
     """
-    rr = np.concatenate([r.rr_intervals for r in readings if r.rr_intervals])
-    if len(rr) < 2:
+    per_reading = [np.array(r.rr_intervals) for r in readings if r.rr_intervals]
+    if not per_reading:
         return 0.0, 0.0, 0.0, 0.0
 
+    # 300–1500ms = 40–200 BPM; выбрасываем артефакты зажима при BPM<40
+    per_reading = [rr[(rr >= 300) & (rr <= 1500)] for rr in per_reading]
+    per_reading = [rr for rr in per_reading if len(rr) >= 2]
+    if not per_reading:
+        return 0.0, 0.0, 0.0, 0.0
+
+    # RMSSD считаем внутри каждого измерения, потом усредняем —
+    # иначе переходы между измерениями при дрейфе BPM искажают результат
+    rmssd_vals = []
+    for rr in per_reading:
+        d = np.abs(np.diff(rr))
+        rmssd_vals.append(float(np.sqrt(np.mean(d ** 2))))
+    rmssd = float(np.mean(rmssd_vals))
+
+    rr = np.concatenate(per_reading)
     mean_rr = float(rr.mean())
     sdnn = float(rr.std())
     diffs = np.abs(np.diff(rr))
-    rmssd = float(np.sqrt(np.mean(diffs ** 2)))
-    pnn50 = float(np.mean(diffs > 50.0))
+    pnn50 = float(np.mean(diffs > 50.0)) if len(diffs) else 0.0
     return rmssd, sdnn, pnn50, mean_rr
 
 
@@ -64,7 +78,7 @@ def extract_features(
 ) -> np.ndarray:
     bpm = np.array([r.bpm for r in readings if r.bpm_valid and r.bpm > 0], dtype=float)
     temp = np.array([r.temp_c for r in readings if r.temp_valid and r.temp_c > 0], dtype=float)
-    fsr = np.array([r.fsr_raw for r in readings], dtype=float)
+    fsr = np.log1p(np.minimum(np.array([r.fsr_raw for r in readings], dtype=float), 200.0))
 
     def _trend(arr: np.ndarray) -> float:
         return float(np.polyfit(np.arange(len(arr)), arr, 1)[0]) if len(arr) >= 2 else 0.0
@@ -82,7 +96,7 @@ def extract_features(
     if baseline is not None and len(bpm) >= 2:
         bpm_z = (float(bpm.mean()) - baseline.bpm_mean) / baseline.bpm_std
         temp_delta = (float(temp.mean()) - baseline.temp_mean) if len(temp) else 0.0
-        fsr_delta = float(fsr.mean()) - baseline.fsr_mean
+        fsr_delta = float(fsr.mean()) - float(np.log1p(baseline.fsr_mean))
     else:
         bpm_z = temp_delta = fsr_delta = 0.0
 

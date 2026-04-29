@@ -456,14 +456,21 @@ void publishUnifiedSnapshot(bool force = false) {
     rrJson
   );
 
-  mqttClient.publish(TOPIC_DATA, payload, true);
+  bool ok = mqttClient.publish(TOPIC_DATA, payload, true);
 
   if (force) {
     lastPublish = millis();
   }
 
-  Serial.print("MQTT publish: ");
-  Serial.println(payload);
+  if (ok) {
+    Serial.print("MQTT publish (");
+    Serial.print(strlen(payload));
+    Serial.print("b): ");
+    Serial.println(payload);
+  } else {
+    Serial.print("MQTT publish FAILED — payload too large? bytes=");
+    Serial.println(strlen(payload));
+  }
 }
 
 void tryPublishBpmImmediately() {
@@ -575,6 +582,7 @@ void setup() {
 
   connectWiFi();
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setBufferSize(512);   // payload с rr_intervals может быть до ~290 байт
   connectMQTT();
 
   Serial.println("System ready.");
