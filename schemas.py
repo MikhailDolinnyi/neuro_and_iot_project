@@ -34,12 +34,22 @@ class FeatureContrib(BaseModel):
     importance: float
 
 
+class BaevskyIndex(BaseModel):
+    si: Optional[float] = None
+    mode_ms: Optional[float] = None
+    amo_pct: Optional[float] = None
+    mxdmn_ms: Optional[float] = None
+    n: int = 0
+    zone: str = "insufficient"
+
+
 class Assessment(BaseModel):
     stress_level: str
     stress_score: Optional[float] = None
     confidence: Optional[float] = None
     valence: Optional[float] = None   # −1 (негатив) … +1 (позитив)
     arousal: Optional[float] = None   # 0 (покой) … 1 (высокое возбуждение)
+    baevsky: Optional[BaevskyIndex] = None
     engine: str
     window_size: int
     explanation: list[FeatureContrib] = []

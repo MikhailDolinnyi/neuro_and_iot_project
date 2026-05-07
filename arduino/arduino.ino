@@ -72,12 +72,13 @@ long lastIrValue = 0;
 
 // =========================
 // RR-интервалы (мс между ударами)
-// Буфер последних RR_BUF_SIZE интервалов — кольцевой.
-// Backend вычисляет из них RMSSD, SDNN, pNN50.
+// FIFO-буфер новых интервалов с прошлого MQTT-publish.
+// При publish буфер выгружается и очищается — backend получает поток
+// уникальных RR без дубликатов и накапливает rolling-окно для индекса Баевского.
+// Размер 16 даёт запас при пульсе до 200 уд/мин и публикации раз в 3 с.
 // =========================
-const byte RR_BUF_SIZE = 8;
+const byte RR_BUF_SIZE = 16;
 uint16_t rrBuffer[RR_BUF_SIZE];
-byte rrHead  = 0;
 byte rrCount = 0;
 
 // =========================
@@ -166,7 +167,6 @@ void resetBpmBuffer() {
   }
 
   // Сбросить RR-буфер вместе с BPM-буфером
-  rrHead  = 0;
   rrCount = 0;
   for (byte i = 0; i < RR_BUF_SIZE; i++) {
     rrBuffer[i] = 0;
@@ -371,33 +371,42 @@ const char* getStateString() {
 // RR helpers
 // =========================
 
-// Добавить RR-интервал (мс) в кольцевой буфер
+// Добавить RR-интервал (мс) в FIFO-буфер.
+// Если буфер переполнен (publish задержался) — отбрасываем самое старое значение,
+// сохраняя последние RR_BUF_SIZE измерений.
 void addRRInterval(unsigned long deltaMs) {
   // Физиологически допустимый диапазон: ~300–2000 мс (30–200 уд/мин)
   if (deltaMs < 300 || deltaMs > 2000) return;
-  rrBuffer[rrHead] = (uint16_t)deltaMs;
-  rrHead = (rrHead + 1) % RR_BUF_SIZE;
-  if (rrCount < RR_BUF_SIZE) rrCount++;
+  if (rrCount < RR_BUF_SIZE) {
+    rrBuffer[rrCount++] = (uint16_t)deltaMs;
+  } else {
+    for (byte i = 1; i < RR_BUF_SIZE; i++) rrBuffer[i - 1] = rrBuffer[i];
+    rrBuffer[RR_BUF_SIZE - 1] = (uint16_t)deltaMs;
+  }
 }
 
-// Сформировать JSON-массив вида [850,820,870] из кольцевого буфера
+// Сформировать JSON-массив [850,820,870] из накопленных RR
 void buildRRJson(char* buf, size_t bufLen) {
   if (rrCount == 0) {
     strncpy(buf, "[]", bufLen);
     return;
   }
   char* p   = buf;
-  char* end = buf + bufLen - 2;   // оставляем место для ']' и '\0'
+  char* end = buf + bufLen - 2;
   *p++ = '[';
-  byte start = (rrHead + RR_BUF_SIZE - rrCount) % RR_BUF_SIZE;
   for (byte i = 0; i < rrCount; i++) {
-    if (p >= end - 6) break;      // защита от переполнения (макс. 5 цифр + ',')
+    if (p >= end - 6) break;
     if (i > 0) *p++ = ',';
-    byte idx = (start + i) % RR_BUF_SIZE;
-    p += snprintf(p, end - p, "%u", rrBuffer[idx]);
+    p += snprintf(p, end - p, "%u", rrBuffer[i]);
   }
   *p++ = ']';
   *p   = '\0';
+}
+
+// Очистить буфер после успешной публикации — следующий publish
+// получит только новые удары, без дубликатов.
+void drainRRBuffer() {
+  rrCount = 0;
 }
 
 // =========================
@@ -415,7 +424,7 @@ void publishUnifiedSnapshot(bool force = false) {
   bool bpmValid = isBpmValid();
 
   // RR-массив строится отдельно, затем вставляется через %s
-  char rrJson[52];
+  char rrJson[100];   // до 16 интервалов × 5 цифр + запятые + скобки
   buildRRJson(rrJson, sizeof(rrJson));
 
   char payload[512];
@@ -463,6 +472,7 @@ void publishUnifiedSnapshot(bool force = false) {
   }
 
   if (ok) {
+    drainRRBuffer();   // RR доставлены — буфер можно очистить
     Serial.print("MQTT publish (");
     Serial.print(strlen(payload));
     Serial.print("b): ");

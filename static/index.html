@@ -65,11 +65,29 @@
       <!-- Stress bar -->
       <div class="w-full space-y-1.5">
         <div class="flex justify-between text-[10px] text-gray-600">
-          <span>Стресс-индекс</span><span id="stress-pct">—</span>
+          <span>Стресс-индекс (ML)</span><span id="stress-pct">—</span>
         </div>
         <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
           <div id="stress-bar" class="h-full bg-gray-700 rounded-full transition-all duration-600"
                style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Baevsky SI -->
+      <div class="w-full space-y-1.5">
+        <div class="flex justify-between text-[10px] text-gray-600">
+          <span title="Индекс напряжения регуляторных систем (Баевский, 1979). Считается по 5-минутному окну RR-интервалов.">
+            Индекс Баевского
+          </span>
+          <span id="baevsky-val" class="font-mono">—</span>
+        </div>
+        <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden relative">
+          <div id="baevsky-bar" class="h-full rounded-full transition-all duration-600 bg-gray-700"
+               style="width:0%"></div>
+        </div>
+        <div class="flex justify-between text-[9px] text-gray-700">
+          <span id="baevsky-zone">—</span>
+          <span id="baevsky-n" class="font-mono">0 RR</span>
         </div>
       </div>
 
@@ -397,6 +415,41 @@ const LEVELS = {
   no_signal:      { label: 'НЕТ СИГНАЛА', t: 'text-gray-700',    b: 'border-gray-800',      bar: 'bg-gray-700'   },
 };
 
+// Зоны индекса Баевского — цвет, подпись, верхняя граница для нормализации шкалы
+const BAEVSKY_ZONES = {
+  parasympathetic: { label: 'РАССЛАБЛЕНИЕ', bar: 'bg-emerald-500', text: 'text-emerald-400' },
+  normal:          { label: 'НОРМА',        bar: 'bg-emerald-400', text: 'text-emerald-300' },
+  tension:         { label: 'НАПРЯЖЕНИЕ',   bar: 'bg-yellow-400',  text: 'text-yellow-300'  },
+  high_stress:     { label: 'СТРЕСС',       bar: 'bg-orange-500',  text: 'text-orange-400'  },
+  overload:        { label: 'СРЫВ АДАПТАЦИИ', bar: 'bg-red-500',   text: 'text-red-400'     },
+  insufficient:    { label: 'НАКОПЛЕНИЕ…',  bar: 'bg-gray-700',    text: 'text-gray-500'    },
+};
+
+function updateBaevsky(b) {
+  const valEl  = document.getElementById('baevsky-val');
+  const barEl  = document.getElementById('baevsky-bar');
+  const zoneEl = document.getElementById('baevsky-zone');
+  const nEl    = document.getElementById('baevsky-n');
+  if (!b) { valEl.textContent = '—'; return; }
+
+  const cfg = BAEVSKY_ZONES[b.zone] ?? BAEVSKY_ZONES.insufficient;
+  zoneEl.textContent = cfg.label;
+  zoneEl.className   = `text-[9px] uppercase tracking-[.15em] ${cfg.text}`;
+  nEl.textContent    = `${b.n} RR`;
+
+  if (b.si == null) {
+    valEl.textContent = '—';
+    barEl.style.width = '0%';
+    barEl.className   = `h-full rounded-full transition-all duration-600 ${cfg.bar}`;
+    return;
+  }
+  valEl.textContent = b.si.toFixed(0);
+  // Шкала логарифмическая: 1000 = 100% бар (выше overload-зоны)
+  const pct = Math.min(100, Math.max(0, Math.log10(Math.max(b.si, 1)) * 33.3));
+  barEl.style.width = pct + '%';
+  barEl.className   = `h-full rounded-full transition-all duration-600 ${cfg.bar}`;
+}
+
 function updateMonitor(d) {
   const cfg = LEVELS[d.stress_level] ?? LEVELS.no_signal;
   const vt = document.getElementById('verdict-text');
@@ -412,6 +465,8 @@ function updateMonitor(d) {
 
   document.getElementById('confidence-val').textContent =
     d.confidence != null ? (d.confidence * 100).toFixed(1) + '%' : '—';
+
+  updateBaevsky(d.baevsky);
 
   if (d.bpm     != null) document.getElementById('bpm-val').textContent  = d.bpm.toFixed(1);
   if (d.temp_c  != null) document.getElementById('temp-val').textContent = d.temp_c.toFixed(2);

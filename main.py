@@ -16,13 +16,15 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
+from analyzer.baevsky import compute_si
 from analyzer.baseline import BaselineCalibrator
 from analyzer.model import StressModel
+from analyzer.rr_buffer import RRBuffer
 from analyzer.session_manager import SessionManager, list_all, build_training_data
 from analyzer.smoother import PredictionSmoother
 from analyzer.synthetic import generate_dataset
 from analyzer.window import SlidingWindow, Reading
-from schemas import Assessment, FeatureContrib, HealthSnapshot, ReadingResponse
+from schemas import Assessment, BaevskyIndex, FeatureContrib, HealthSnapshot, ReadingResponse
 
 BASE_DIR = Path(__file__).parent
 
@@ -50,6 +52,7 @@ window      = SlidingWindow()
 baseline    = BaselineCalibrator()
 smoother    = PredictionSmoother()
 session_mgr = SessionManager()
+rr_buffer   = RRBuffer()  # 5-минутное окно RR для индекса Баевского
 
 _sse_clients:   list[asyncio.Queue] = []
 _last_event:    Optional[dict] = None
@@ -157,14 +160,24 @@ async def _broadcast(payload: dict) -> None:
         await q.put(payload)
 
 
+def _current_baevsky() -> BaevskyIndex:
+    return BaevskyIndex(**compute_si(rr_buffer.values()).to_dict())
+
+
 def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
     if snapshot.state != "measuring" or not snapshot.bpm_valid:
         smoother.reset()
-        return Assessment(stress_level="no_signal", engine="none", window_size=window.size())
+        return Assessment(
+            stress_level="no_signal", engine="none",
+            window_size=window.size(), baevsky=_current_baevsky(),
+        )
 
     if not window.is_ready():
         smoother.reset()
-        return Assessment(stress_level="warming_up", engine="none", window_size=window.size())
+        return Assessment(
+            stress_level="warming_up", engine="none",
+            window_size=window.size(), baevsky=_current_baevsky(),
+        )
 
     label, score, conf, valence, arousal = model.predict(
         window.as_list(), baseline=baseline.stats
@@ -184,6 +197,7 @@ def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
         confidence=conf,
         valence=valence,
         arousal=arousal,
+        baevsky=_current_baevsky(),
         engine="ml",
         window_size=window.size(),
         explanation=explanation,
@@ -210,6 +224,9 @@ async def _process_reading(snapshot: HealthSnapshot) -> Assessment:
 
     if snapshot.state == "measuring" and snapshot.bpm_valid:
         window.push(reading)
+        # RR-буфер копит интервалы независимо от ML-окна — для 5-мин индекса Баевского
+        if snapshot.rr_intervals:
+            rr_buffer.extend(snapshot.rr_intervals)
 
     assessment = _compute_assessment(snapshot)
 
@@ -473,6 +490,7 @@ async def model_select(body: dict) -> dict:
 @app.post("/api/window/reset")
 async def reset_window() -> dict:
     window.clear()
+    rr_buffer.clear()
     smoother.reset()
     return {"status": "ok"}
 
