@@ -62,37 +62,27 @@
         НЕТ СИГНАЛА
       </div>
 
-      <!-- Stress bar -->
-      <div class="w-full space-y-1.5">
-        <div class="flex justify-between text-[10px] text-gray-600">
-          <span>Стресс-индекс (ML)</span><span id="stress-pct">—</span>
-        </div>
-        <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-          <div id="stress-bar" class="h-full bg-gray-700 rounded-full transition-all duration-600"
-               style="width:0%"></div>
-        </div>
-      </div>
-
-      <!-- Baevsky SI -->
-      <div class="w-full space-y-1.5">
-        <div class="flex justify-between text-[10px] text-gray-600">
-          <span title="Индекс напряжения регуляторных систем (Баевский, 1979). Считается по 5-минутному окну RR-интервалов.">
+      <!-- Baevsky SI — главный числовой индикатор -->
+      <div class="w-full space-y-2 bg-gray-800/40 rounded-xl p-3 border border-gray-800">
+        <div class="flex justify-between items-baseline">
+          <span class="text-[10px] text-gray-500 uppercase tracking-[.18em]"
+                title="Индекс напряжения регуляторных систем (Баевский, 1979). Считается по 5-минутному окну RR-интервалов.">
             Индекс Баевского
           </span>
-          <span id="baevsky-val" class="font-mono">—</span>
+          <span id="baevsky-zone" class="text-[10px] uppercase tracking-[.15em] text-gray-500">—</span>
         </div>
-        <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden relative">
+        <div class="flex items-end justify-between">
+          <div id="baevsky-val" class="text-3xl font-light text-gray-400 leading-none font-mono">—</div>
+          <div id="baevsky-n" class="text-[9px] text-gray-700 font-mono">0 RR</div>
+        </div>
+        <div class="h-1.5 bg-gray-900 rounded-full overflow-hidden">
           <div id="baevsky-bar" class="h-full rounded-full transition-all duration-600 bg-gray-700"
                style="width:0%"></div>
-        </div>
-        <div class="flex justify-between text-[9px] text-gray-700">
-          <span id="baevsky-zone">—</span>
-          <span id="baevsky-n" class="font-mono">0 RR</span>
         </div>
       </div>
 
       <div class="text-center">
-        <p class="text-[10px] text-gray-600 mb-1">Уверенность</p>
+        <p class="text-[10px] text-gray-600 mb-1">Уверенность модели</p>
         <p id="confidence-val" class="text-2xl font-light text-gray-400">—</p>
       </div>
     </div>
@@ -193,8 +183,8 @@
       <canvas id="fsr-chart" height="60"></canvas>
     </div>
     <div class="bg-gray-900 rounded-2xl border border-gray-800 p-4">
-      <p class="text-[10px] text-rose-500/60 uppercase tracking-[.2em] mb-2">Стресс-индекс</p>
-      <canvas id="stress-chart" height="60"></canvas>
+      <p class="text-[10px] text-rose-500/60 uppercase tracking-[.2em] mb-2">Индекс Баевского (SI)</p>
+      <canvas id="baevsky-chart" height="60"></canvas>
     </div>
   </div>
 </div>
@@ -393,10 +383,10 @@ function makeChart(id, color, yMin, yMax) {
 }
 
 const charts = {
-  bpm:    makeChart('bpm-chart',    '#22d3ee', 40,  150),
-  temp:   makeChart('temp-chart',   '#a78bfa', 25,  40),
-  fsr:    makeChart('fsr-chart',    '#fb923c', 0,   1023),
-  stress: makeChart('stress-chart', '#f43f5e', 0.0, 1.0),
+  bpm:     makeChart('bpm-chart',     '#22d3ee', 40,  150),
+  temp:    makeChart('temp-chart',    '#a78bfa', 25,  40),
+  fsr:     makeChart('fsr-chart',     '#fb923c', 0,   1023),
+  baevsky: makeChart('baevsky-chart', '#f43f5e', 0,   900),
 };
 
 function push(chart, val) {
@@ -457,12 +447,6 @@ function updateMonitor(d) {
   vt.className = `w-full text-center text-2xl font-bold tracking-[.12em] py-5 px-4
                    rounded-xl border transition-all duration-500 ${cfg.t} ${cfg.b}`;
 
-  const pct = d.stress_score != null ? Math.round(d.stress_score * 100) : 0;
-  document.getElementById('stress-pct').textContent = d.stress_score != null ? pct + '%' : '—';
-  const bar = document.getElementById('stress-bar');
-  bar.style.width = pct + '%';
-  bar.className = `h-full rounded-full transition-all duration-600 ${cfg.bar}`;
-
   document.getElementById('confidence-val').textContent =
     d.confidence != null ? (d.confidence * 100).toFixed(1) + '%' : '—';
 
@@ -473,10 +457,10 @@ function updateMonitor(d) {
   if (d.fsr_raw != null) document.getElementById('fsr-val').textContent  = d.fsr_raw;
   if (d.window_size != null) document.getElementById('hdr-window').textContent = d.window_size + '/25';
 
-  push(charts.bpm,    d.bpm    ?? null);
-  push(charts.temp,   d.temp_c ?? null);
-  push(charts.fsr,    d.fsr_raw ?? null);
-  push(charts.stress, d.stress_score ?? null);
+  push(charts.bpm,     d.bpm    ?? null);
+  push(charts.temp,    d.temp_c ?? null);
+  push(charts.fsr,     d.fsr_raw ?? null);
+  push(charts.baevsky, d.baevsky?.si ?? null);
 
   // Explanation
   if (d.explanation && d.explanation.length) {

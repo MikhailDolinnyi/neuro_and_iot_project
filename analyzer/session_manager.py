@@ -111,7 +111,6 @@ class SessionManager:
         bpm: float,
         temp_c: float,
         fsr_raw: int,
-        stress_score: Optional[float],
         rr_intervals: list[float] | None = None,
     ) -> None:
         if self._current:
@@ -120,7 +119,6 @@ class SessionManager:
                 "bpm": bpm,
                 "temp_c": temp_c,
                 "fsr_raw": fsr_raw,
-                "stress_score": stress_score,
                 "rr_intervals": rr_intervals or [],
             })
 

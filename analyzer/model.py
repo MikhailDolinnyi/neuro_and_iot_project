@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 
 import joblib
 import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.model_selection import StratifiedKFold, cross_val_score
@@ -162,16 +163,21 @@ class StressModel:
                                   "cv_std":  round(float(gbm_scores.std()),  4)},
         }
 
-        # Выбираем лучшую табличную модель
+        # Выбираем лучшую табличную модель и калибруем её вероятности.
+        # Tree-based модели на чистых данных склонны к overconfidence (выдают 99-100%).
+        # Калибровка приводит predict_proba к реальной частотной интерпретации.
+        # method='isotonic' нужен 1000+ образцов; иначе fallback на Platt scaling.
+        calib_method = "isotonic" if len(y) >= 1000 else "sigmoid"
         if rf_scores.mean() >= gbm_scores.mean():
-            self._clf = rf
+            base = rf
             self.active_model = "random_forest"
             self.cv_accuracy = float(rf_scores.mean())
         else:
-            gbm.fit(xs, y)
-            self._clf = gbm
+            base = gbm
             self.active_model = "gradient_boosting"
             self.cv_accuracy = float(gbm_scores.mean())
+        self._clf = CalibratedClassifierCV(base, method=calib_method, cv=5)
+        self._clf.fit(xs, y)
 
         # --- ROCKET (если переданы сырые окна) ---
         if x_win is not None and len(x_win) >= 10:
@@ -232,8 +238,11 @@ class StressModel:
         self,
         readings: list[Reading],
         baseline: Optional[BaselineStats] = None,
-    ) -> tuple[str, float, float, float, float]:
-        """Вернуть (label, stress_score, confidence, valence, arousal)."""
+    ) -> tuple[str, float, float, float]:
+        """Классифицировать состояние. Вернуть (label, confidence, valence, arousal).
+
+        Числовая шкала «силы» состояния — задача индекса Баевского, не модели.
+        """
         if self.active_model == "rocket" and self._rocket is not None:
             x_win = _readings_to_array(readings)[np.newaxis]   # (1, n_time, 3)
             x_rocket = self._rocket.transform(x_win)
@@ -249,12 +258,8 @@ class StressModel:
             classes = list(self._clf.classes_)
 
         confidence = float(proba.max())
-        _STRESS_WEIGHTS = {"calm": 0.0, "cognitive_load": 0.5, "stressed": 1.0}
-        stress_score = float(sum(
-            proba[i] * _STRESS_WEIGHTS.get(c, 0.5) for i, c in enumerate(classes)
-        ))
         valence, arousal = _compute_va(classes, proba)
-        return label, stress_score, confidence, valence, arousal
+        return label, confidence, valence, arousal
 
     def explain(
         self,

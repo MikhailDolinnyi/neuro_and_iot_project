@@ -179,12 +179,10 @@ def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
             window_size=window.size(), baevsky=_current_baevsky(),
         )
 
-    label, score, conf, valence, arousal = model.predict(
+    label, conf, valence, arousal = model.predict(
         window.as_list(), baseline=baseline.stats
     )
-    label, score, conf, valence, arousal = smoother.update(
-        label, score, conf, valence, arousal
-    )
+    label, conf, valence, arousal = smoother.update(label, conf, valence, arousal)
 
     explanation = [
         FeatureContrib(**f)
@@ -193,7 +191,6 @@ def _compute_assessment(snapshot: HealthSnapshot) -> Assessment:
 
     return Assessment(
         stress_level=label,
-        stress_score=score,
         confidence=conf,
         valence=valence,
         arousal=arousal,
@@ -235,7 +232,6 @@ async def _process_reading(snapshot: HealthSnapshot) -> Assessment:
             bpm=snapshot.bpm_current,
             temp_c=snapshot.temp_c,
             fsr_raw=snapshot.fsr_raw,
-            stress_score=assessment.stress_score,
             rr_intervals=[float(x) for x in snapshot.rr_intervals],
         )
 

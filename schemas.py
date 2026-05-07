@@ -44,12 +44,11 @@ class BaevskyIndex(BaseModel):
 
 
 class Assessment(BaseModel):
-    stress_level: str
-    stress_score: Optional[float] = None
+    stress_level: str                 # тип состояния: calm/cognitive_load/stressed (от ML)
     confidence: Optional[float] = None
     valence: Optional[float] = None   # −1 (негатив) … +1 (позитив)
     arousal: Optional[float] = None   # 0 (покой) … 1 (высокое возбуждение)
-    baevsky: Optional[BaevskyIndex] = None
+    baevsky: Optional[BaevskyIndex] = None  # числовой индекс напряжения АНС
     engine: str
     window_size: int
     explanation: list[FeatureContrib] = []
